@@ -1,16 +1,28 @@
 """
 Author: Joon Sung Park (joonspk@stanford.edu)
+Modified by Chaehyeon Kim
 
 File: gpt_structure.py
 Description: Wrapper functions for calling OpenAI APIs.
 """
 import json
 import random
-import openai
+# import openai
+from transformers import LlamaForCausalLM, LlamaTokenizer
+import torch
 import time 
 
 from utils import *
-openai.api_key = openai_api_key
+# openai.api_key = openai_api_key
+
+# Llama model specifications
+model_name = "meta-llama/Llama-3.2-3B-Instruct"  # Adjust model size as needed
+tokenizer = LlamaTokenizer.from_pretrained(model_name)
+model = LlamaForCausalLM.from_pretrained(
+    model_name,
+    device_map="auto",  # Automatically assigns model parts to available GPUs/CPUs
+    torch_dtype=torch.float16  # Use float16 for efficiency (if hardware supports it)
+)
 
 def ChatGPT_request(prompt): 
   """
@@ -26,11 +38,12 @@ def ChatGPT_request(prompt):
   """
   # temp_sleep()
   try: 
-    completion = openai.ChatCompletion.create(
-    model="gpt-3.5-turbo", 
-    messages=[{"role": "user", "content": prompt}]
-    )
-    return completion["choices"][0]["message"]["content"]
+    formatted_prompt = f"[INST] {prompt} [/INST]"
+    input_ids = tokenizer.encode(formatted_prompt, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+      output = model.generate(input_ids, max_length=512, temperature=0.7, top_p=0.9)
+    response = tokenizer.decode(output[0], skip_special_tokens=True)
+    return response
   
   except: 
     print ("ChatGPT ERROR")

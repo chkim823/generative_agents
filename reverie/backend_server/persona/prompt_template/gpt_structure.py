@@ -1,17 +1,30 @@
 """
 Author: Joon Sung Park (joonspk@stanford.edu)
+Modified by Chaehyeon Kim
 
 File: gpt_structure.py
 Description: Wrapper functions for calling OpenAI APIs.
 """
 import json
 import random
-import openai
+# import openai
+# Replacing with Llama model
+from transformers import LlamaForCausalLM, LlamaTokenizer, AutoTokenizer
+import torch
 import time 
 
 from utils import *
 
-openai.api_key = openai_api_key
+# openai.api_key = openai_api_key
+
+# Llama model specifications
+model_name = "meta-llama/Llama-3.2-3B-Instruct"  # Adjust model size as needed
+tokenizer = AutoTokenizer.from_pretrained(model_name, use_auth_token=True)
+model = LlamaForCausalLM.from_pretrained(
+    model_name,
+    device_map="auto",  # Automatically assigns model parts to available GPUs/CPUs
+    torch_dtype=torch.float16  # Use float16 for efficiency (if hardware supports it)
+)
 
 def temp_sleep(seconds=0.1):
   time.sleep(seconds)
@@ -19,11 +32,21 @@ def temp_sleep(seconds=0.1):
 def ChatGPT_single_request(prompt): 
   temp_sleep()
 
-  completion = openai.ChatCompletion.create(
-    model="gpt-3.5-turbo", 
-    messages=[{"role": "user", "content": prompt}]
-  )
-  return completion["choices"][0]["message"]["content"]
+  # completion = openai.ChatCompletion.create(
+  #   model="gpt-3.5-turbo", 
+  #   messages=[{"role": "user", "content": prompt}]
+  # )
+  
+  # return completion["choices"][0]["message"]["content"]
+
+  # Below, code is modified to run on llama
+  # Formatting as user input
+  formatted_prompt = f"[INST] {prompt} [/INST]"
+  input_ids = tokenizer.encode(formatted_prompt, return_tensors="pt").to(model.device)
+  with torch.no_grad():
+    output = model.generate(input_ids, max_length=512, temperature=0.7, top_p=0.9)
+  response = tokenizer.decode(output[0], skip_special_tokens=True)
+  return response
 
 
 # ============================================================================
@@ -45,11 +68,13 @@ def GPT4_request(prompt):
   temp_sleep()
 
   try: 
-    completion = openai.ChatCompletion.create(
-    model="gpt-4", 
-    messages=[{"role": "user", "content": prompt}]
-    )
-    return completion["choices"][0]["message"]["content"]
+    # Formatting as user input
+    formatted_prompt = f"[INST] {prompt} [/INST]"
+    input_ids = tokenizer.encode(formatted_prompt, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+      output = model.generate(input_ids, max_length=512, temperature=0.7, top_p=0.9)
+    response = tokenizer.decode(output[0], skip_special_tokens=True)
+    return response
   
   except: 
     print ("ChatGPT ERROR")
@@ -70,11 +95,13 @@ def ChatGPT_request(prompt):
   """
   # temp_sleep()
   try: 
-    completion = openai.ChatCompletion.create(
-    model="gpt-3.5-turbo", 
-    messages=[{"role": "user", "content": prompt}]
-    )
-    return completion["choices"][0]["message"]["content"]
+    # Formatting as user input
+    formatted_prompt = f"[INST] {prompt} [/INST]"
+    input_ids = tokenizer.encode(formatted_prompt, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+      output = model.generate(input_ids, max_length=512, temperature=0.7, top_p=0.9)
+    response = tokenizer.decode(output[0], skip_special_tokens=True)
+    return response
   
   except: 
     print ("ChatGPT ERROR")
@@ -208,17 +235,33 @@ def GPT_request(prompt, gpt_parameter):
   """
   temp_sleep()
   try: 
-    response = openai.Completion.create(
-                model=gpt_parameter["engine"],
-                prompt=prompt,
-                temperature=gpt_parameter["temperature"],
-                max_tokens=gpt_parameter["max_tokens"],
-                top_p=gpt_parameter["top_p"],
-                frequency_penalty=gpt_parameter["frequency_penalty"],
-                presence_penalty=gpt_parameter["presence_penalty"],
-                stream=gpt_parameter["stream"],
-                stop=gpt_parameter["stop"],)
-    return response.choices[0].text
+    # response = openai.Completion.create(
+    #             model=gpt_parameter["engine"],
+    #             prompt=prompt,
+    #             temperature=gpt_parameter["temperature"],
+    #             max_tokens=gpt_parameter["max_tokens"],
+    #             top_p=gpt_parameter["top_p"],
+    #             frequency_penalty=gpt_parameter["frequency_penalty"],
+    #             presence_penalty=gpt_parameter["presence_penalty"],
+    #             stream=gpt_parameter["stream"],
+    #             stop=gpt_parameter["stop"],)
+    
+    # Llama version
+    formatted_prompt = f"[INST] {prompt} [/INST]"
+    input_ids = tokenizer.encode(formatted_prompt, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        output = model.generate(
+            input_ids,
+            max_length=gpt_parameter["max_tokens"],  # Equivalent to OpenAI's max_tokens
+            temperature=gpt_parameter["temperature"],
+            top_p=gpt_parameter["top_p"],
+            do_sample=True,  # Ensures non-deterministic output (like OpenAI)
+        )
+
+    # Decode response
+    response = tokenizer.decode(output[0], skip_special_tokens=True)
+    return response
+  
   except: 
     print ("TOKEN LIMIT EXCEEDED")
     return "TOKEN LIMIT EXCEEDED"
@@ -273,19 +316,45 @@ def safe_generate_response(prompt,
   return fail_safe_response
 
 
-def get_embedding(text, model="text-embedding-ada-002"):
-  text = text.replace("\n", " ")
-  if not text: 
-    text = "this is blank"
-  return openai.Embedding.create(
-          input=[text], model=model)['data'][0]['embedding']
+def get_embedding(text):
+  # Set the padding token to be the eos_token if not already set
+  if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+  
+  # Tokenize the input text and get input IDs
+  inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
+
+  # Create an attention mask
+  attention_mask = inputs['attention_mask'] if 'attention_mask' in inputs else None
+      
+  # Get the model's output (hidden states)
+  with torch.no_grad():
+    outputs = model(**inputs, attention_mask=attention_mask, output_hidden_states=True)
+
+  # Extract the hidden states from the outputs
+  hidden_states = outputs.hidden_states
+  
+  # Use the last hidden state for embeddings
+  # We take the mean of the last hidden state across tokens to get a sentence-level embedding
+  embeddings = hidden_states[-1].mean(dim=1).squeeze().numpy()
+  
+  return embeddings
 
 
 if __name__ == '__main__':
-  gpt_parameter = {"engine": "text-davinci-003", "max_tokens": 50, 
-                   "temperature": 0, "top_p": 1, "stream": False,
-                   "frequency_penalty": 0, "presence_penalty": 0, 
-                   "stop": ['"']}
+  # gpt_parameter = {"engine": "text-davinci-003", "max_tokens": 50, 
+  #                  "temperature": 0, "top_p": 1, "stream": False,
+  #                  "frequency_penalty": 0, "presence_penalty": 0, 
+  #                  "stop": ['"']}
+  gpt_parameter = {
+        "temperature": 0.7,
+        "max_tokens": 256,
+        "top_p": 0.9,
+        "frequency_penalty": 0.0,  # No direct equivalent in HF models
+        "presence_penalty": 0.0,  # No direct equivalent in HF models
+        "stream": False,  # Streaming is handled differently in HF
+        "stop": None  # Stop tokens can be manually set if needed
+    }
   curr_input = ["driving to a friend's house"]
   prompt_lib_file = "prompt_template/test_prompt_July5.txt"
   prompt = generate_prompt(curr_input, prompt_lib_file)

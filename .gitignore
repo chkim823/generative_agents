@@ -100,3 +100,9 @@ ENV/
 
 # Rope project settings
 .ropeproject
+
+############## Custom-added #################
+# Test results (un-add when saving results)
+storage
+# For assets
+assets
